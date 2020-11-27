@@ -14,11 +14,12 @@ namespace Perftop
     {
         public const ulong MagicNumber = 0x32454c4946524550;
 
-        private static ConcurrentQueue<string> Callstacks = new ConcurrentQueue<string>();
+        private static ConcurrentQueue<string> _callstacks = new ConcurrentQueue<string>();
 
-        private static Timer _timer;
+        // ReSharper disable once NotAccessedField.Local
+        private static Timer? _timer;
 
-        static void Main(string[] args)
+        static void Main()
         {
             var knownPids = new HashSet<uint>();
 
@@ -38,7 +39,7 @@ namespace Perftop
 
             bool endOfFile = false;
 
-            PerfRecordIndexes indexes = null;
+            PerfRecordIndexes? indexes = null;
 
             while (!endOfFile)
             {
@@ -51,22 +52,22 @@ namespace Perftop
                         break;
 
                     case PerfEventType.RecordMmap:
-                    {
-                        var perfRecordMmap = new PerfRecordMmap(input, header);
-
-                        var filename = ReadString(perfRecordMmap.Filename);
-
-                        symbols.Add(perfRecordMmap.Addr, filename);
-
-                        ReadSymbols(filename, perfRecordMmap.Addr, perfRecordMmap.Pgoff, perfRecordMmap.Len, symbols);
-
-                        if (knownPids.Add(perfRecordMmap.Pid))
                         {
-                            ReadPerfMap(perfRecordMmap.Pid, symbols);
-                        }
+                            var perfRecordMmap = new PerfRecordMmap(input, header);
 
-                        break;
-                    }
+                            var filename = ReadString(perfRecordMmap.Filename);
+
+                            symbols.Add(perfRecordMmap.Addr, filename);
+
+                            ReadSymbols(filename, perfRecordMmap.Addr, perfRecordMmap.Pgoff, perfRecordMmap.Len, symbols);
+
+                            if (knownPids.Add(perfRecordMmap.Pid))
+                            {
+                                ReadPerfMap(perfRecordMmap.Pid, symbols);
+                            }
+
+                            break;
+                        }
 
                     case PerfEventType.LostEvents:
                         Console.WriteLine("Lost events");
@@ -88,6 +89,11 @@ namespace Perftop
                         break;
 
                     case PerfEventType.RecordSample:
+                        if (indexes == null)
+                        {
+                            break;
+                        }
+
                         var sample = new PerfRecordSample(input, header, indexes);
 
                         var symbol = "UNKNOWN";
@@ -104,27 +110,27 @@ namespace Perftop
                             }
                         }
 
-                        Callstacks.Enqueue(symbol);
+                        _callstacks.Enqueue(symbol);
 
                         break;
 
                     case PerfEventType.RecordMmap2:
-                    {
-                        var perfRecordMmap2 = new PerfRecordMmap2(input, header);
-
-                        var filename = ReadString(perfRecordMmap2.filename);
-
-                        symbols.Add(perfRecordMmap2.Addr, filename);
-
-                        ReadSymbols(filename, perfRecordMmap2.Addr, perfRecordMmap2.Pgoff, perfRecordMmap2.Len, symbols);
-
-                        if (knownPids.Add(perfRecordMmap2.Pid))
                         {
-                            ReadPerfMap(perfRecordMmap2.Pid, symbols);
-                        }
+                            var perfRecordMmap2 = new PerfRecordMmap2(input, header);
 
-                        break;
-                    }
+                            var filename = ReadString(perfRecordMmap2.filename);
+
+                            symbols.Add(perfRecordMmap2.Addr, filename);
+
+                            ReadSymbols(filename, perfRecordMmap2.Addr, perfRecordMmap2.Pgoff, perfRecordMmap2.Len, symbols);
+
+                            if (knownPids.Add(perfRecordMmap2.Pid))
+                            {
+                                ReadPerfMap(perfRecordMmap2.Pid, symbols);
+                            }
+
+                            break;
+                        }
 
                     case PerfEventType.RecordKSymbol:
                         //var perfRecordKSymbol = new PerfRecordKSymbol(input, header);
@@ -194,7 +200,7 @@ namespace Perftop
 
         private static void ProcessCallstacks()
         {
-            var callstacks = Interlocked.Exchange(ref Callstacks, new ConcurrentQueue<string>());
+            var callstacks = Interlocked.Exchange(ref _callstacks, new ConcurrentQueue<string>());
 
             var groups = callstacks.GroupBy(c => c).OrderByDescending(g => g.Count()).ToList();
 
@@ -275,12 +281,17 @@ namespace Perftop
                 CreateNoWindow = true
             });
 
+            if (process == null)
+            {
+                throw new InvalidOperationException("Failed to invoke nm");
+            }
+
             int count = 0;
 
             while (!process.StandardOutput.EndOfStream)
             {
                 var line = process.StandardOutput.ReadLine();
-                var values = line.Split(' ', 3);
+                var values = line!.Split(' ', 3);
 
                 if (values[1] == "U")
                 {
